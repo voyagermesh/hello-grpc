@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package voyagermesh.dev.hellogrpc.apis.hello.v1alpha1;
+
+option go_package = "voyagermesh.dev/hello-grpc/pkg/apis/hello/v1alpha1";
+
+import "google/api/annotations.proto";
+
+service HelloService {
+  rpc Intro(IntroRequest) returns (IntroResponse) {
+    option (google.api.http) = {
+      get : "/apis/hello/v1alpha1/intro/json"
+    };
+  }
+  rpc Stream(IntroRequest) returns (stream IntroResponse) {}
+}
+
+message IntroRequest {
+  string name = 1;
+}
+
+message IntroResponse {
+  string intro = 1;
+}

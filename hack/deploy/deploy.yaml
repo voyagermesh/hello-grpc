@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: hello-grpc
+  name: hello-grpc
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hello-grpc
+  template:
+    metadata:
+      labels:
+        app: hello-grpc
+    spec:
+      containers:
+      - args:
+        - run
+        - --v=3
+        image: appscode/hello-grpc
+        imagePullPolicy: Always
+        name: hello-grpc
+        ports:
+        - containerPort: 8080
+        - containerPort: 8443
+        - containerPort: 56790
+        readinessProbe:
+          httpGet:
+            path: /apis/status/json
+            port: 8080
+            scheme: HTTP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-grpc
+  namespace: default
+  labels:
+    app: hello-grpc
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  - name: tls
+    port: 443
+    targetPort: 8443
+  - name: ops
+    port: 56790
+    targetPort: 56790
+  selector:
+    app: hello-grpc

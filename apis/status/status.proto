@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package voyagermesh.dev.hellogrpc.apis.status;
+
+option go_package = "voyagermesh.dev/hello-grpc/pkg/apis/status";
+
+import "google/api/annotations.proto";
+
+service StatusService {
+  rpc Status(StatusRequest) returns (StatusResponse) {
+    option (google.api.http) = {
+      get : "/apis/status/json"
+    };
+  }
+}
+
+message StatusRequest {
+}
+
+message StatusResponse {
+  Version version = 1;
+}
+
+message Version {
+  string name              = 1;
+  string version           = 2;
+  string version_strategy  = 3;
+  string commit_hash       = 6;
+  string git_branch        = 7;
+  string git_tag           = 8;
+  string commit_timestamp  = 9;
+}
