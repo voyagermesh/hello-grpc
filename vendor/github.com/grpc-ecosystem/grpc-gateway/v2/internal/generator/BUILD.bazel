@@ -3,14 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 package(default_visibility = ["//visibility:public"])
 
 go_library(
-    name = "generator",
+    name = "go_default_library",
     srcs = ["generator.go"],
     importpath = "github.com/grpc-ecosystem/grpc-gateway/v2/internal/generator",
-    deps = ["//internal/descriptor"],
-)
-
-alias(
-    name = "go_default_library",
-    actual = ":generator",
-    visibility = ["//:__subpackages__"],
+    deps = ["//internal/descriptor:go_default_library"],
 )

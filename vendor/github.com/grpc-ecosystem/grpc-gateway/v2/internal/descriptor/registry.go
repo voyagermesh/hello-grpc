@@ -2,14 +2,14 @@ package descriptor
 
 import (
 	"fmt"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/golang/glog"
-	"github.com/grpc-ecosystem/grpc-gateway/v2/internal/codegenerator"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/internal/descriptor/openapiconfig"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2/options"
 	"google.golang.org/genproto/googleapis/api/annotations"
-	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/pluginpb"
 )
@@ -27,6 +27,9 @@ type Registry struct {
 
 	// prefix is a prefix to be inserted to golang package paths generated from proto package names.
 	prefix string
+
+	// importPath is used as the package if no input files declare go_package. If it contains slashes, everything up to the rightmost slash is ignored.
+	importPath string
 
 	// pkgMap is a user-specified mapping from file path to proto package.
 	pkgMap map[string]string
@@ -58,7 +61,7 @@ type Registry struct {
 
 	// useJSONNamesForFields if true json tag name is used for generating fields in OpenAPI definitions,
 	// otherwise the original proto name is used. It's helpful for synchronizing the OpenAPI definition
-	// with gRPC-Gateway response, if it uses json tags for marshaling.
+	// with grpc-gateway response, if it uses json tags for marshaling.
 	useJSONNamesForFields bool
 
 	// useFQNForOpenAPIName if true OpenAPI names will use the full qualified name (FQN) from proto definition,
@@ -109,9 +112,6 @@ type Registry struct {
 
 	// omitPackageDoc, if false, causes a package comment to be included in the generated code.
 	omitPackageDoc bool
-
-	// recursiveDepth sets the maximum depth of a field parameter
-	recursiveDepth int
 }
 
 type repeatedFieldSeparator struct {
@@ -137,52 +137,44 @@ func NewRegistry() *Registry {
 		messageOptions: make(map[string]*options.Schema),
 		serviceOptions: make(map[string]*options.Tag),
 		fieldOptions:   make(map[string]*options.JSONSchema),
-		recursiveDepth: 1000,
 	}
 }
 
 // Load loads definitions of services, methods, messages, enumerations and fields from "req".
 func (r *Registry) Load(req *pluginpb.CodeGeneratorRequest) error {
-	gen, err := protogen.Options{}.New(req)
-	if err != nil {
-		return err
-	}
-	// Note: keep in mind that this might be not enough because
-	// protogen.Plugin is used only to load files here.
-	// The support for features must be set on the pluginpb.CodeGeneratorResponse.
-	codegenerator.SetSupportedFeaturesOnPluginGen(gen)
-	return r.load(gen)
-}
-
-func (r *Registry) LoadFromPlugin(gen *protogen.Plugin) error {
-	return r.load(gen)
-}
-
-func (r *Registry) load(gen *protogen.Plugin) error {
-	for filePath, f := range gen.FilesByPath {
-		r.loadFile(filePath, f)
+	for _, file := range req.GetProtoFile() {
+		r.loadFile(file)
 	}
 
-	for filePath, f := range gen.FilesByPath {
-		if !f.Generate {
-			continue
+	var targetPkg string
+	for _, name := range req.FileToGenerate {
+		target := r.files[name]
+		if target == nil {
+			return fmt.Errorf("no such file: %s", name)
 		}
-		file := r.files[filePath]
-		if err := r.loadServices(file); err != nil {
+		name := r.packageIdentityName(target.FileDescriptorProto)
+		if targetPkg == "" {
+			targetPkg = name
+		} else {
+			if targetPkg != name {
+				return fmt.Errorf("inconsistent package names: %s %s", targetPkg, name)
+			}
+		}
+
+		if err := r.loadServices(target); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
 // loadFile loads messages, enumerations and fields from "file".
 // It does not loads services and methods in "file".  You need to call
 // loadServices after loadFiles is called for all files to load services and methods.
-func (r *Registry) loadFile(filePath string, file *protogen.File) {
+func (r *Registry) loadFile(file *descriptorpb.FileDescriptorProto) {
 	pkg := GoPackage{
-		Path: string(file.GoImportPath),
-		Name: string(file.GoPackageName),
+		Path: r.goPackagePath(file),
+		Name: r.defaultGoPackageName(file),
 	}
 	if r.standalone {
 		pkg.Alias = "ext" + strings.Title(pkg.Name)
@@ -198,14 +190,13 @@ func (r *Registry) loadFile(filePath string, file *protogen.File) {
 		}
 	}
 	f := &File{
-		FileDescriptorProto:     file.Proto,
-		GoPkg:                   pkg,
-		GeneratedFilenamePrefix: file.GeneratedFilenamePrefix,
+		FileDescriptorProto: file,
+		GoPkg:               pkg,
 	}
 
-	r.files[filePath] = f
-	r.registerMsg(f, nil, file.Proto.MessageType)
-	r.registerEnum(f, nil, file.Proto.EnumType)
+	r.files[file.GetName()] = f
+	r.registerMsg(f, nil, file.GetMessageType())
+	r.registerEnum(f, nil, file.GetEnumType())
 }
 
 func (r *Registry) registerMsg(file *File, outerPath []string, msgs []*descriptorpb.DescriptorProto) {
@@ -360,14 +351,11 @@ func (r *Registry) SetStandalone(standalone bool) {
 	r.standalone = standalone
 }
 
-// SetRecursiveDepth records the max recursion count
-func (r *Registry) SetRecursiveDepth(count int) {
-	r.recursiveDepth = count
-}
-
-// GetRecursiveDepth returns the max recursion count
-func (r *Registry) GetRecursiveDepth() int {
-	return r.recursiveDepth
+// SetImportPath registers the importPath which is used as the package if no
+// input files declare go_package. If it contains slashes, everything up to the
+// rightmost slash is ignored.
+func (r *Registry) SetImportPath(importPath string) {
+	r.importPath = importPath
 }
 
 // ReserveGoPackageAlias reserves the unique alias of go package.
@@ -383,6 +371,27 @@ func (r *Registry) ReserveGoPackageAlias(alias, pkgpath string) error {
 	}
 	r.pkgAliases[alias] = pkgpath
 	return nil
+}
+
+// goPackagePath returns the go package path which go files generated from "f" should have.
+// It respects the mapping registered by AddPkgMap if exists. Or use go_package as import path
+// if it includes a slash,  Otherwide, it generates a path from the file name of "f".
+func (r *Registry) goPackagePath(f *descriptorpb.FileDescriptorProto) string {
+	name := f.GetName()
+	if pkg, ok := r.pkgMap[name]; ok {
+		return path.Join(r.prefix, pkg)
+	}
+
+	gopkg := f.Options.GetGoPackage()
+	idx := strings.LastIndex(gopkg, "/")
+	if idx >= 0 {
+		if sc := strings.LastIndex(gopkg, ";"); sc > 0 {
+			gopkg = gopkg[:sc+1-1]
+		}
+		return gopkg
+	}
+
+	return path.Join(r.prefix, path.Dir(name))
 }
 
 // GetAllFQMNs returns a list of all FQMNs
@@ -568,6 +577,57 @@ func (r *Registry) GetOmitPackageDoc() bool {
 	return r.omitPackageDoc
 }
 
+// sanitizePackageName replaces unallowed character in package name
+// with allowed character.
+func sanitizePackageName(pkgName string) string {
+	pkgName = strings.Replace(pkgName, ".", "_", -1)
+	pkgName = strings.Replace(pkgName, "-", "_", -1)
+	return pkgName
+}
+
+// defaultGoPackageName returns the default go package name to be used for go files generated from "f".
+// You might need to use an unique alias for the package when you import it.  Use ReserveGoPackageAlias to get a unique alias.
+func (r *Registry) defaultGoPackageName(f *descriptorpb.FileDescriptorProto) string {
+	name := r.packageIdentityName(f)
+	return sanitizePackageName(name)
+}
+
+// packageIdentityName returns the identity of packages.
+// protoc-gen-grpc-gateway rejects CodeGenerationRequests which contains more than one packages
+// as protoc-gen-go does.
+func (r *Registry) packageIdentityName(f *descriptorpb.FileDescriptorProto) string {
+	if f.Options != nil && f.Options.GoPackage != nil {
+		gopkg := f.Options.GetGoPackage()
+		idx := strings.LastIndex(gopkg, "/")
+		if idx < 0 {
+			gopkg = gopkg[idx+1:]
+		}
+
+		gopkg = gopkg[idx+1:]
+		// package name is overrided with the string after the
+		// ';' character
+		sc := strings.IndexByte(gopkg, ';')
+		if sc < 0 {
+			return sanitizePackageName(gopkg)
+
+		}
+		return sanitizePackageName(gopkg[sc+1:])
+	}
+	if p := r.importPath; len(p) != 0 {
+		if i := strings.LastIndex(p, "/"); i >= 0 {
+			p = p[i+1:]
+		}
+		return p
+	}
+
+	if f.Package == nil {
+		base := filepath.Base(f.GetName())
+		ext := filepath.Ext(base)
+		return strings.TrimSuffix(base, ext)
+	}
+	return f.GetPackage()
+}
+
 // RegisterOpenAPIOptions registers OpenAPI options
 func (r *Registry) RegisterOpenAPIOptions(opts *openapiconfig.OpenAPIOptions) error {
 	if opts == nil {
@@ -662,11 +722,4 @@ func (r *Registry) GetOpenAPIServiceOption(qualifiedService string) (*options.Ta
 func (r *Registry) GetOpenAPIFieldOption(qualifiedField string) (*options.JSONSchema, bool) {
 	opt, ok := r.fieldOptions[qualifiedField]
 	return opt, ok
-}
-
-func (r *Registry) FieldName(f *Field) string {
-	if r.useJSONNamesForFields {
-		return f.GetJsonName()
-	}
-	return f.GetName()
 }

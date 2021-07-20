@@ -15,17 +15,20 @@ import (
 	"strings"
 
 	"github.com/golang/glog"
-	"github.com/grpc-ecosystem/grpc-gateway/v2/internal/codegenerator"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/internal/descriptor"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway/internal/gengateway"
 	"google.golang.org/protobuf/compiler/protogen"
 )
 
 var (
+	importPrefix               = flag.String("import_prefix", "", "prefix to be added to go package paths for imported proto files")
+	importPath                 = flag.String("import_path", "", "used as the package if no input files declare go_package. If it contains slashes, everything up to the rightmost slash is ignored.")
 	registerFuncSuffix         = flag.String("register_func_suffix", "Handler", "used to construct names of generated Register*<Suffix> methods.")
 	useRequestContext          = flag.Bool("request_context", true, "determine whether to use http.Request's context or not")
 	allowDeleteBody            = flag.Bool("allow_delete_body", false, "unless set, HTTP DELETE methods may not have a body")
 	grpcAPIConfiguration       = flag.String("grpc_api_configuration", "", "path to gRPC API Configuration in YAML format")
+	pathType                   = flag.String("paths", "", "specifies how the paths of generated files are structured")
+	modulePath                 = flag.String("module", "", "specifies a module prefix that will be stripped from the go package to determine the output directory")
 	allowRepeatedFieldsInBody  = flag.Bool("allow_repeated_fields_in_body", false, "allows to use repeated field in `body` and `response_body` field of `google.api.http` annotation option")
 	repeatedPathParamSeparator = flag.String("repeated_path_param_separator", "csv", "configures how repeated fields should be split. Allowed values are `csv`, `pipes`, `ssv` and `tsv`.")
 	allowPatchFeature          = flag.Bool("allow_patch_feature", true, "determines whether to use PATCH feature involving update masks (using google.protobuf.FieldMask).")
@@ -52,23 +55,24 @@ func main() {
 		os.Exit(0)
 	}
 
-	protogen.Options{
-		ParamFunc: flag.CommandLine.Set,
-	}.Run(func(gen *protogen.Plugin) error {
-		reg := descriptor.NewRegistry()
+	reg := descriptor.NewRegistry()
 
-		err := applyFlags(reg)
-		if err != nil {
+	protogen.Options{
+		// FIXME: ParamFunc is not enough at this point because it does not receive all params.
+		//        Some are swallowed by protogen like "paths".
+		//        This problem will go away when the code generation is completely rewritten
+		//        to support protogen.Plugin.
+		ParamFunc: flag.CommandLine.Set,
+	}.Run(func(plugin *protogen.Plugin) error {
+		// FIXME: still needed to parse request parameter and apply flags manually, see the comment above.
+		parseFlags(reg, plugin.Request.GetParameter())
+		if err := applyFlags(reg); err != nil {
 			return err
 		}
 
-		codegenerator.SetSupportedFeaturesOnPluginGen(gen)
-
-		generator := gengateway.New(reg, *useRequestContext, *registerFuncSuffix, *allowPatchFeature, *standalone)
-
 		glog.V(1).Infof("Parsing code generator request")
 
-		if err := reg.LoadFromPlugin(gen); err != nil {
+		if err := reg.Load(plugin.Request); err != nil {
 			return err
 		}
 
@@ -78,7 +82,7 @@ func main() {
 		}
 
 		var targets []*descriptor.File
-		for _, target := range gen.Request.FileToGenerate {
+		for _, target := range plugin.Request.FileToGenerate {
 			f, err := reg.LookupFile(target)
 			if err != nil {
 				return err
@@ -86,10 +90,11 @@ func main() {
 			targets = append(targets, f)
 		}
 
-		files, err := generator.Generate(targets)
+		g := gengateway.New(reg, *useRequestContext, *registerFuncSuffix, *pathType, *modulePath, *allowPatchFeature, *standalone)
+		files, err := g.Generate(targets)
 		for _, f := range files {
 			glog.V(1).Infof("NewGeneratedFile %q in %s", f.GetName(), f.GoPkg)
-			genFile := gen.NewGeneratedFile(f.GetName(), protogen.GoImportPath(f.GoPkg.Path))
+			genFile := plugin.NewGeneratedFile(f.GetName(), protogen.GoImportPath(f.GoPkg.Path))
 			if _, err := genFile.Write([]byte(f.GetContent())); err != nil {
 				return err
 			}
@@ -102,10 +107,6 @@ func main() {
 }
 
 func parseFlags(reg *descriptor.Registry, parameter string) {
-	if parameter == "" {
-		return
-	}
-
 	for _, p := range strings.Split(parameter, ",") {
 		spec := strings.SplitN(p, "=", 2)
 		if len(spec) == 1 {
@@ -137,6 +138,8 @@ func applyFlags(reg *descriptor.Registry) error {
 		glog.Warningf("Option warn_on_unbound_methods has no effect when generate_unbound_methods is used.")
 	}
 	reg.SetStandalone(*standalone)
+	reg.SetPrefix(*importPrefix)
+	reg.SetImportPath(*importPath)
 	reg.SetAllowDeleteBody(*allowDeleteBody)
 	reg.SetAllowRepeatedFieldsInBody(*allowRepeatedFieldsInBody)
 	reg.SetOmitPackageDoc(*omitPackageDoc)
