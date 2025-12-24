@@ -1,6 +1,6 @@
 module voyagermesh.dev/hello-grpc
 
-go 1.17
+go 1.23.0
 
 require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.0
@@ -8,7 +8,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.5.0
 	github.com/spf13/cobra v1.2.1
 	go.uber.org/zap v1.17.0
-	golang.org/x/net v0.7.0
+	golang.org/x/net v0.38.0
 	gomodules.xyz/errors v0.0.0-20201104190405-077f059979fd
 	gomodules.xyz/grpc-go-addons v0.3.0
 	gomodules.xyz/logs v0.0.5
@@ -50,8 +50,8 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
-	golang.org/x/sys v0.5.0 // indirect
-	golang.org/x/text v0.7.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	gomodules.xyz/clock v0.0.0-20200817085942-06523dba733f // indirect
 	gomodules.xyz/flags v0.1.3 // indirect
 	gomodules.xyz/sets v0.2.1 // indirect
