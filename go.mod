@@ -24,7 +24,6 @@ require (
 
 require (
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
-	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/stretchr/testify v1.8.0 // indirect
 )
 
@@ -34,7 +33,7 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-logr/logr v1.2.3 // indirect
-	github.com/golang/glog v0.0.0-20210429001901-424d2337a529 // indirect
+	github.com/golang/glog v1.2.4 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
